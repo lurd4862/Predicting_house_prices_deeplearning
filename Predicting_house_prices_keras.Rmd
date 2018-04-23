@@ -9,7 +9,9 @@ In this notebook I try predicting house prices using deep neural nets.
 
 For a more complete work I first try a "naive" model where we assume the price of a property can be predicted using only descriptive features with no concept of time dependence or autocorrelations. I show how to do this by applying my own version of tidy crossvalidated deep neural networks.  
 
-Next I try to apply stacked deep neural nets on data where we also record the time interaction and correlations. We do this by simultaneously optimizing over 2 networks; a simple network much like the naive model and a LSTM network for forecasting the price over time. This way the naive model will naturally lose some accuracy due to concept drift since the data it is trying to predict is further into the future, but the LSTM model will naturally pick up the slack using this autocorrelation signal. Together I hope to predict the price of a home using both the time-independant signals and time dependant signals...
+Next I try to apply stacked deep neural nets on data where we also record the time interaction and correlations. We do this by simultaneously optimizing over 2 networks; a simple network much like the naive model and a LSTM network for forecasting the price over time. This way the naive model will naturally lose some accuracy due to concept drift since the data it is trying to predict is further into the future, but the LSTM model will naturally pick up the slack using this autocorrelation signal.
+
+Lastly I use the LSTM model to produce a 1 month forecast and feed this as a dimension to the inference model during predictions
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -72,13 +74,6 @@ train_targets %>% head
 ### Scale the variables
 
 ```{r}
-# train_data <- 
-# train_data %>% 
-# apply(MARGIN = 1, FUN = scale) %>% t
-# 
-# test_data <- 
-# 	test_data %>% 
-# 	apply(MARGIN = 1, FUN = scale) %>% t
 
 mean <- apply(train_data, 2, mean)
 std <- apply(train_data, 2, sd)
@@ -101,13 +96,7 @@ I am also assuming the outcome is called 'target', but this can be generalised u
 ```{r}
 
 define_compile_train_predict <- function(train,test,epochs = 100,shuffle = TRUE,...){
-	# browser()
 	
-# train_X <- tidy_cross_val$train[[1]] %>% as_tibble() %>% select(-target) %>% as.matrix()
-# test_X <- tidy_cross_val$test[[1]] %>% as_tibble() %>% select(-target) %>% as.matrix()
-# train_y <- tidy_cross_val$train[[1]] %>% as_tibble() %>%  select(target) %>% as.matrix()
-# test_y <- tidy_cross_val$test[[1]] %>% as_tibble() %>%  select(target) %>% as.matrix()
-
 train_X <- train %>% as_tibble() %>% select(-target) %>% as.matrix()
 test_X <- test %>% as_tibble() %>% select(-target) %>% as.matrix()
 train_y <- train %>% as_tibble() %>%  select(target) %>% as.matrix()
@@ -218,7 +207,6 @@ We can visualize this over-fitting more generally by looking in the `history` ob
 
 all_mae_histories <- 
 tidy_cross_val$model_output %>% map_df(pluck,"history","metrics","val_mean_absolute_error") %>% t()
-# tidy_cross_val$model_output %>% map(pluck,"history")
 
 average_mae_history <- data.frame(
 epoch = seq(1:ncol(all_mae_histories)),
@@ -310,6 +298,8 @@ So the gradient boosted machine using k-fold can get around 2.4-2.9 MAE and the 
 
 ## Time series models using LSTM together with an inference network
 
+Besides a dense feedforward network we can also predict time series movements of house prices using a LSTM network. This will allow us to predict the average move in house prices over the next couple of months
+
 ### Read in the data
 
 > All residential home sales in Ames, Iowa between 2006 and 2010
@@ -390,6 +380,8 @@ So what we are left with is a table with 66 features and 2904 samples...
 
 #### Split the data for 2 models
 
+We want to train a model to predict house prices using the descriptive features and also train an lstm model to predict future price movements.
+
 First we need to split test train sets:
 
 ```{r}
@@ -414,7 +406,7 @@ Since both sets have all 60 months we don't have any problems here...
 
 For the LSTM model we need only the time index and the value:
 
-For the time series model we are going to train on the move in average monthly house price so the complete model can use this in predictions  
+For the time series model we are going to train on the moving average monthly house price so the complete model can use this in predictions  
 
 ```{r}
 LSTM_train <- 
@@ -469,7 +461,7 @@ return(cbind(bind_numeric_features,bind_binary_classes))
 
 ```
 
-Before we cast everything to numeric we should scale these numeric variables since the new sparse matrices will have 1's and 0's:
+Before we cast everything to numeric we should scale these numeric variables since the new sparse matrices will have 1's and 0's:  
 
 Function that will scale all the numeric variables
 
@@ -499,7 +491,7 @@ return(list(recombined = recombined,mean = mean, std = std))
 }
 ```
 
-Scale numerics... (Remember that the test set must be scaled using the training scales otherwise you wouldn't be predicting using the same data scale ass trained)
+Scale numerics... (Remember that the test set must be scaled using the training scales otherwise you wouldn't be predicting using the same data scale as trained)
 
 Here we will start out with the original cleaned data again because we want to spread the same number of classes in the train and test sets
 
@@ -603,8 +595,6 @@ return(list(predictions = predictions, loss = results$loss, mae = results$mean_a
 
 ```
 
-However, note that when we are going to train the final model we will be using the keras model API to stack the 2 networks which means we wont be using the sequential model framework
-
 Let's see out of box performance of our inference network:  
 
 ```{r}
@@ -618,7 +608,7 @@ model_outp$history$metrics$val_mean_absolute_error %>% last()
 
 This looks promising... If we calculate the MAE / average price: `r model_outp$history$metrics$val_mean_absolute_error %>% last() / inference_train_target %>% mean * 100` %  
 
-This is the expected % error before we optimize the model and combine the LSTM network
+This is the expected % error before we optimize the model and combine the LSTM network. I have not yet tested and tuned the network here so with some revision to the network we could potensially improve this by a lot.
 
 ### Design LSTM model
 
@@ -738,7 +728,7 @@ Since we want to only use the auto correlations let's force AR model:
 forecast::auto.arima(LSTM_train$value,max.q = 0)
 ```
 
-So it should be OK if we use a model condidering a lag of 2 months.
+So it should be OK if we use a model considering a lag of 2 months.
 
 ```{r}
 LSTM_train %>%
@@ -757,6 +747,8 @@ LSTM_train %>%
 
 optimal_lag_setting <- 2
 ```
+
+For us to validate the model we will use a method called backtesting. Backtesting is basically splitting the data into different splits of data and for each split leaving out a future horizon that you can predict and measure accuracy. By testing all the different folds we can feel more certain of model performance since it wasn't just a one time lucky score.  
 
 ```{r}
 
@@ -779,7 +771,7 @@ rolling_origin_resamples <- rolling_origin(
 rolling_origin_resamples
 ```
 
-A function that visualizes the different times series splits 
+A function that visualizes the different times series splits:  
 
 ```{r}
 # Plotting function for a single split
@@ -970,7 +962,7 @@ y_test_vec <- lag_test_tbl$value
 y_test_arr <- array(data = y_test_vec, dim = c(length(y_test_vec), 1))
 ```
 
-Test a LSTM network to get a feel for the model
+Test a LSTM network to get a feel for the model:
 
 ```{r}
 model <- keras_model_sequential()
@@ -1007,28 +999,11 @@ for (i in 1:epochs) {
     
 }
 
-# for (i in 1:epochs) {
-#     model %>% keras::fit(x   = LSTM_input_full_model$LSTM_input,
-#                   y          = LSTM_input_full_model$LSTM_target,
-#                   batch_size = batch_size,
-#                   epochs     = 1,
-#                   verbose    = 1,
-#                   shuffle    = FALSE)
-# 
-#     model %>% reset_states()
-#     # cat("Epoch: ", i, '\n')
-# 
-# }
 ```
 
 Now let's predict the next 3 months so we can test the performance of the model
 
 ```{r}
-# Make Predictions
-# pred_out <- model %>% 
-#     predict(LSTM_input_full_model$LSTM_input, batch_size = batch_size) %>%
-#     .[,1] 
-# Make Predictions
 
 pred_out <- model %>% 
     predict(x_test_arr, batch_size = batch_size) %>%
@@ -1089,11 +1064,13 @@ calc_rmse <- function(prediction_tbl) {
 }
 ```
 
+which is:  
+
 ```{r}
 calc_rmse(ret) 
 ```
 
-Function that plots the errors
+Function that plots the errors...  
 
 ```{r}
 # Setup single plot function
@@ -1127,7 +1104,7 @@ ret %>%
 
 Awesome the LSTM model is ready to start making us some predictions!
 
-Now we need to back test the model on all the time slices
+Now we need to back test the model on all the time slices now since we now have a method we can map over all of them simultaneously  
 
 ### Back test LSTM model
 
@@ -1518,9 +1495,9 @@ future_LSTM_tbl %>%
 
 ```
 
-### Combine LSTM and Inference networks into 1 deep neural network
+### Combine LSTM and Inference networks into 1 deep neural network??
 
-Now that we have validated and tested both our theoretical networks we want to combine these in order to predict the 
+I was tempted to combine these 2 networks together so that I could backpropegate them simultaneously. This would allow us to use the inference network using descriptive features together with the macro economic trends in the market of housing prices.  
 
 #### Define complete model
 
@@ -1571,6 +1548,10 @@ metrics = c('mae')
 ```
 
 Create our LSTM input:  
+
+I realised very quickly that we have a small problem here... To backpropogate both networks simultaneously They would need to feed the same batch of inputs into both networks! But our LSTM model was trained on monthly data - this means I had a 1 to many relationship between the 2 models inputs.
+
+I tried to naively circumvent this by infering the lag of prices on a per house level. We could do this by simply using the average shift and applying it as a predicted lag index:  
 
 ```{r}
 prepare_LSTM_input <- function(monthly_ts,sample_ts,lag_setting,train_length) {
@@ -1625,7 +1606,9 @@ prepare_LSTM_input(monthly_ts = LSTM_train,sample_ts = sample_ts,lag_setting = 3
 
 ```
 
-```{r}
+So let's try to use our LSTM network on this?  
+
+```{r, eval=FALSE}
 history <- model %>% fit(
 list(inference_input = inference_train_X,
 LSTM_input = LSTM_input_full_model$LSTM_input),
@@ -1637,20 +1620,12 @@ shuffle = FALSE
 )
 ```
 
-```{r}
-# predictions <- 
-# 	model %>% 
-# 	keras::predict_on_batch(list(inference_input = inference_train_X,
-# LSTM_input = LSTM_input_full_model$LSTM_input))
+The network can't back propogate properly! This is because the LSTM model need the inputs to move consistently through time. Even though our inputs are correctly lagged we have inconsistent numbers of rows for each time index which ruins the 'memory' part of the model...  
 
-# results <- 
-# model %>% 
-# keras::evaluate(list(inference_input = inference_train_X,
-# LSTM_input = LSTM_input_full_model$LSTM_input), LSTM_input_full_model$LSTM_target, verbose = 1)
+What we can do however is use the prediction of price movement as a feature in the inference model. We can train the inference model by adding the future average price of properties by month by region truncating that data that has no future observations.
 
-plot_outp <- 
-	history %>% plot
+Then we train the LSTM and inference networks seperately - the LSTM then predicts that future movement for us so we cant test the accuracy of our combined model feeding the LSTM into the inference network into a result
 
-plot_outp
-```
+## Future additions
 
+I will build this feed forward from LSTM to inference network soon and add it to this post
