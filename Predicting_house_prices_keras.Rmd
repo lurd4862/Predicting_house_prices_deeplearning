@@ -1499,6 +1499,8 @@ future_LSTM_tbl %>%
 
 I was tempted to combine these 2 networks together so that I could backpropegate them simultaneously. This would allow us to use the inference network using descriptive features together with the macro economic trends in the market of housing prices.  
 
+To stack different deep neural networks together we can use the keras API like this:  
+
 #### Define complete model
 
 ```{r}
@@ -1606,7 +1608,7 @@ prepare_LSTM_input(monthly_ts = LSTM_train,sample_ts = sample_ts,lag_setting = 3
 
 ```
 
-So let's try to use our LSTM network on this?  
+So let's try to train the 2 deep neural networks simulteneously:  
 
 ```{r, eval=FALSE}
 history <- model %>% fit(
@@ -1616,11 +1618,17 @@ LSTM_input_full_model$LSTM_target,
 epochs = 300, 
 batch_size = batch_size,
 shuffle = FALSE
-# ,verbose = 0
+,verbose = 0
 )
 ```
 
-The network can't back propogate properly! This is because the LSTM model need the inputs to move consistently through time. Even though our inputs are correctly lagged we have inconsistent numbers of rows for each time index which ruins the 'memory' part of the model...  
+The plot:
+
+```{r}
+history %>% plot
+```
+
+The network can't back propogate properly! This is because the LSTM model needs the inputs to move consistently through time. Even though our inputs are correctly lagged we have inconsistent numbers of rows for each time index which ruins the 'memory' part of the model...  
 
 What we can do however is use the prediction of price movement as a feature in the inference model. We can train the inference model by adding the future average price of properties by month by region truncating that data that has no future observations.
 
@@ -1628,4 +1636,4 @@ Then we train the LSTM and inference networks seperately - the LSTM then predict
 
 ## Future additions
 
-I will build this feed forward from LSTM to inference network soon and add it to this post
+I will build this feed forward from LSTM to inference network soon and then update this post!! Watch this space!!
